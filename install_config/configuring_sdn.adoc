@@ -164,6 +164,236 @@ Check VNIDs by running:
 $ oc get netnamespace
 ----
 
+[[renumbering-sdn-networks]]
+== Renumbering the SDN Network
+
+It is difficult to change the networking configuration of an
+{product-title} cluster after it has been deployed, but if absolutely
+necessary, it can be done.
+
+=== Expanding the Cluster IP Range By Adding Nodes
+
+The easiest reconfiguration involves changing the
+`*clusterNetworkCIDR*` to make room to add additional nodes, while
+leaving existing Nodes and Pods untouched. (That is, changing
+`*clusterNetworkCIDR*` to a new value which is larger than the old
+value, and which includes the old value as a subset.)
+
+For example, with the default `*clusterNetworkCIDR*` value of
+*10.128.0.0/14* and the default `*hostSubnetLength*` of *9*, you can
+have 512 nodes, with Pod subnets from *10.128.0.0/23* to
+*10.131.254.0/23*. (Older versions of {product-title} had smaller
+defaults.) If you changed `*clusterNetworkCIDR*` to *10.128.0.0/13*,
+then you could have an additional 512 nodes, with Pod IPs going up to
+*10.135.255.255*.
+
+To do this, simply change the `*clusterNetworkCIDR*` value in the
+`*networkConfig*` stanza of the *_master-config.yaml_* file, and then
+restart the master; for single master clusters:
+
+----
+# systemctl restart atomic-openshift-master
+----
+
+For multi-master clusters, on each master:
+
+----
+# systemctl restart atomic-openshift-master-controllers
+----
+
+You will also need to restart the node service on the master and on
+each of the nodes, to make them update their IP routing information to
+take the larger cluster network into account:
+
+----
+# systemctl restart atomic-openshift-node
+----
+
+As stated above, this only works when the new `*clusterNetworkCIDR*`
+value fully contains the original value; if you try to change it to
+any other value, then when you restart the master, it will complain
+about the mismatch and refuse to start. You will need to use the
+procedure below in this case.
+
+=== Other Changes to the Cluster Network IP Range
+
+If you want to completely change `*clusterNetworkCIDR*` (eg, moving
+from *10.128.0.0/14* to *192.168.9.0/8*) or you want to change
+`*hostSubnetLength*` (to allow more or fewer pods per node), you will
+need to completely take down the cluster temporarily.
+
+[WARNING]
+You should xref:../admin_guide/backup_restore.adoc[back up] your
+cluster before attempting this procedure.
+
+. On every node and master, do:
++
+----
+# systemctl stop atomic-openshift-node
+# systemctl restart docker
+# ovs-vsctl del-br br0
+----
+
+. As a cluster admin user, run:
++
+----
+$ oc delete hostsubnets --all
+$ oc delete clusternetwork default
+----
+
+. If you are reconfiguring your network to be _smaller_, and need to
+get rid of some of your existing nodes, delete the excess node records
+now. e.g.:
++
+----
+$ oc delete node node-33
+$ oc delete node node-34
+$ oc delete node node-35
+----
+
+. Stop the masters. In a single-master cluster:
++
+----
+# systemctl stop atomic-openshift-master
+----
++
+For multi-master clusters, on each master:
++
+----
+# systemctl stop atomic-openshift-master-controllers
+# systemctl stop atomic-openshift-master-api
+----
+
+. Now edit the *_master-config.yaml_* file and make the desired changes.
+
+. Restart the masters:
++
+----
+# systemctl start atomic-openshift-master
+----
++
+or (multi-master):
++
+----
+# systemctl start atomic-openshift-master-controllers
+# systemctl start atomic-openshift-master-api
+----
+
+. Restart the node service on all of the masters and (remaining) nodes:
++
+----
+# systemctl start atomic-openshift-node
+----
+
+At this point the cluster will be back up, but every
+previously-running pod will have been killed, and it may take a few
+minutes to get everything completely back up and running again.
+
+=== Changing the Service Network IP Range
+
+If you need to change `*serviceNetworkCIDR*`, either because you need
+more than 65,536 service IPs, or because you have belatedly discovered
+a conflict between the service IP range and other IPs on your network,
+you will have to take down the cluster (as above), but you will also
+need to delete and recreate all Service objects. There is no simple
+way to do this, and in particular, to get all of the permissions
+correct, each Service will have to be recreated by the correct user;
+you can't simply have an administrator recreate them. Thus, this will
+result in a more noticeable outage than the `*clusterNetworkCIDR*`
+renumbering case.
+
+[WARNING]
+You should xref:../admin_guide/backup_restore.adoc[back up] your
+cluster before attempting this procedure.
+
+. On every node and master, do:
++
+----
+# systemctl stop atomic-openshift-node
+# ovs-vsctl del-br br0
+----
+
+. Stop the masters. In a single-master cluster:
++
+----
+# systemctl stop atomic-openshift-master
+----
++
+For multi-master clusters, on each master:
++
+----
+# systemctl stop atomic-openshift-master-controllers
+# systemctl stop atomic-openshift-master-api
+----
+
+. Now edit the *_master-config.yaml_* file and make the desired change
+to `*serviceNetworkCIDR*` in the `*networkConfig*` section, and
+`*servicesSubnet*` in the `*kubernetesMasterConfig*` section.
+Additionally, comment out the `*networkPluginName*` line in
+`*networkConfig*` so that {product-title} will start with no network
+plugin next time.
+
+. Now restart the masters:
++
+----
+# systemctl start atomic-openshift-master
+----
++
+or (multi-master):
++
+----
+# systemctl start atomic-openshift-master-controllers
+# systemctl start atomic-openshift-master-api
+----
+
+. As a cluster admin user, delete all services in all namespaces, and
+delete the ClusterNetwork record:
++
+----
+$ for ns in $(oc get namespaces -o jsonpath='{..name}'); do
+    oc delete services -n $ns --all
+  done
+$ oc delete clusternetwork default
+----
+
+. And stop the masters again:
++
+----
+# systemctl start atomic-openshift-master
+----
++
+or (multi-master):
++
+----
+# systemctl start atomic-openshift-master-controllers
+# systemctl start atomic-openshift-master-api
+----
+
+. Edit *_master-config.yaml_* again and uncomment the
+`*networkPluginName*` line. Then start the masters again:
++
+----
+# systemctl restart atomic-openshift-master
+----
++
+or (multi-master):
++
+----
+# systemctl restart atomic-openshift-master-controllers
+# systemctl restart atomic-openshift-master-api
+----
+
+. Restart the node service on all of the nodes and masters:
++
+----
+# systemctl start atomic-openshift-node
+----
+
+Unlike in the `*clusterNetworkCIDR*`-renumbering case, this will not
+kill previously-running pods. However, users will have to recreate
+their services manually after the renumbering since they were deleted
+as part of the procedure.
+
 [[external-access-to-the-cluster-network]]
 == External Access to the Cluster Network
 
