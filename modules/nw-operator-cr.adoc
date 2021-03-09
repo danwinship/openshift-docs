@@ -194,9 +194,9 @@ endif::operator[]
 ifndef::operator[]
 <3> The maximum transmission unit (MTU) for the Geneve (Generic Network Virtualization Encapsulation) overlay network. This is detected automatically based on the MTU of the primary network interface. You do not normally need to override the detected MTU.
 +
-If the auto-detected value is not what you expected it to be, confirm that the MTU that is set on your nodes is correct. You cannot use this value to change the MTU value on the underlying nodes.
+If the auto-detected value is not what you expected it to be, confirm that the MTU on the primary network interface on your nodes is correct. You cannot use this option to change the MTU value of the primary network interface on the nodes.
 +
-If your cluster requires different MTU values for different nodes, then you must set this value to `100` less than the lowest MTU value in your cluster. For example, if the smallest MTU in your cluster is `900`, then you must set this value to `800`.
+If your cluster requires different MTU values for different nodes, then you must set this value to `100` less than the lowest MTU value in your cluster. For example, if some nodes in your cluster have an MTU of `9001`, and some have an MTU of `1500`, then you must set this value to `1400`.
 endif::operator[]
 
 ifdef::operator[]
